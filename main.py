@@ -1,65 +1,67 @@
-# main.py
-# import the necessary packages
-from flask import Flask, render_template, Response
-from camera import VideoCamera
-
-import base64
-import io
-from matplotlib.figure import Figure
-
-import numpy as np
-
+from flask import Flask, redirect, url_for, request, render_template
+import requests
+import json
+from opencage.geocoder import OpenCageGeocode # Used for geodecoding of ISS coordinates.
 app = Flask(__name__)
+from pprint import pprint
+
 
 @app.route('/')
-def index():
-    # rendering webpage
-    return render_template('index.html')
+def home():
+    return redirect('/grades')
 
 
-def gen(camera):
-    while True:
-        #get camera frame
-        frame = camera.get_frame()
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg' 
-               b'\r\n\r\n' + frame + b'\r\n\r\n')
+@app.route('/grades')
+def grades():
+    return redirect(url_for('login'))
 
-@app.route('/video_feed')
-def video_feed():
-    return Response(gen(VideoCamera(1920,1080)),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
+@app.route('/welcome/<name>/')
+def welcome(name):
+    return f"Weclome {name}!"
 
-def plot_to_html(fig):
-    # Encode the image. You don't have to change this.
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png")
-    # Embed the result in the html output.
-    data = base64.b64encode(buf.getbuffer()).decode("ascii")
-    return f'data:image/png;base64,{data}'
+@app.route('/results', methods = ['POST', 'GET'])
+def results():
+    if request.method == 'POST':  # Submitting a form will create a POST request
+        results = request.form  # Get the form data from the HTTP data.
+        return render_template('results.html', results=results)
 
-@app.route('/matplotlib')
-def matplotlib():
+@app.route('/login', methods = ['POST', 'GET'])
+def login():
+    if request.method == 'POST':  # If a request is sent
+        user = request.form['nm']
+        return redirect(url_for('welcome', name=user))
+    else:  # If no request is sent (Pages are retreived using a GET method).
+        return render_template('login.html')
 
-    # Create a figure (doesn't matter what it contains).
-    fig = Figure()
-    ax = fig.subplots()
-    x = np.arange(0, 10, 0.1)
-    ax.plot(np.sin(x), np.cos(x))
-    ax.set_title("O")
-    ax.axis('equal')
 
-    x = [0, 0, 1, 2, 2]
-    y = [1, 0, 0.75, 0, 1]
-    fig2 = Figure()
-    ax2 = fig2.subplots()
-    ax2.plot(x,y)
-    ax2.set_title("W")
-    ax2.axis('equal')
+iss_api = r"http://api.open-notify.org/iss-now.json"  # The 'r' before the string makes it a raw string. This is to
+# ensure that the string isn't processed by the interpreter in any way.
 
-    figs = [plot_to_html(fig) for fig in [fig2, fig, fig2]]
-    return render_template('plots.html', plots=figs)
+# Get your own API key at https://opencagedata.com/api
+api_key = "REPLACE_THIS_WITH_YOUR_OWN_KEY"
+geocoder = OpenCageGeocode(api_key)
+
+@app.route('/iss')
+def iss():
+    iss_response = requests.get(iss_api)  # Send a request to the API URL.
+
+    if (iss_response.status_code != 200): # 200 means success.
+        print(f"Something went wrong with calling {iss_api}")
+    else:
+        # The result is given (as with many APIs) in JSON format,
+        # which is very similar to Python's dicts.
+        # However, all responses are returned as pure text. The json()
+        # function will turn them into a useable, subscriptable dict.
+
+        iss_json = iss_response.json()
+        pprint(iss_json) # pprint means pretty print.
+        lat = iss_json["iss_position"]["latitude"]
+        lon = iss_json["iss_position"]["longitude"]
+
+        geo_results = geocoder.reverse_geocode(lat, lon)
+        pprint(geo_results)
+        formatted_location = geo_results[0]["formatted"]
+        return render_template('iss.html', iss_data=iss_json, lat=lat, lon=lon, location=formatted_location)
 
 if __name__ == '__main__':
-    # defining server ip address and port
-    app.run()
+    app.run(debug=True)
